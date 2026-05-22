@@ -23,8 +23,15 @@
 // ── FIREBASE ─────────────────────────────────────────────────────────────────
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore, doc, setDoc, getDoc, getDocs,
-  updateDoc, deleteDoc, collection
+  getFirestore,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  collection,
+  addDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const db = getFirestore(initializeApp({
@@ -106,7 +113,7 @@ async function loadAll(){
     if(!ps.exists()) await setDoc(doc(db,'config','productos'),{lista:D_PRO});
     if(!is.exists()) await setDoc(doc(db,'config','insumos'),{lista:D_INS});
 
-    const ds = await getDoc(doc(db,'dias',hoy()));
+    const ds = await getDoc(doc(db,'jornadaActual','actual'));
     let pedidos=[], tituloDia='', diaCerrado=false, mTitulo=false;
     if(ds.exists()){
       const d = ds.data();
@@ -132,10 +139,14 @@ async function saveProd(lista){ await setDoc(doc(db,'config','productos'),{lista
 async function saveIns(lista) { await setDoc(doc(db,'config','insumos'),{lista}); }
 
 async function savePedidos(pedidos){
-  const ref = doc(db,'dias',hoy());
-  const sn  = await getDoc(ref);
-  if(sn.exists()) await updateDoc(ref,{pedidos});
-  else await setDoc(ref,{pedidos,fecha:hoy(),titulo:ST.tituloDia||fdia(hoy()),abierto:true});
+  const ref = doc(db,'jornadaActual','actual');
+
+  await setDoc(ref,{
+    pedidos,
+    fecha:hoy(),
+    titulo:ST.tituloDia || fdia(hoy()),
+    abierto:true
+  });
 }
 
 async function doIniciarJornada(){
