@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Zutto Bar — Gestión</title>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Black+Han+Sans&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Nunito', sans-serif; background: #0f0f13; color: #f0ece4; min-height: 100vh; }
+    input, select, button { font-family: 'Nunito', sans-serif; }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #0f0f13; } ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { width:36px;height:36px;border:3px solid #2a2a35;border-top-color:#f5a623;border-radius:50%;animation:spin .7s linear infinite;margin:40px auto; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, collection, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBZyKBToG5LtZ1l1GNxGj19_t0e9pTNsBw",
+  authDomain: "zutto-bar-d8866.firebaseapp.com",
+  projectId: "zutto-bar-d8866",
+  storageBucket: "zutto-bar-d8866.firebasestorage.app",
+  messagingSenderId: "873376077584",
+  appId: "1:873376077584:web:b4b5b38a2b6b491f7ef795"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const genId = () => Math.random().toString(36).slice(2,9);
+const fmt = n => new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n||0);
+const hoy = () => new Date().toISOString().slice(0,10);
+const horaActual = () => new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+const fechaLegible = iso => { const [y,m,d]=iso.split('-'); return `${d}/${m}/${y}`; };
+
+const DEFAULT_INSUMOS = [
+  {id:'ins1',nombre:'Harina',stock:5000,unidad:'g'},{id:'ins2',nombre:'Maizena',stock:2000,unidad:'g'},
+  {id:'ins3',nombre:'Huevo',stock:30,unidad:'u'},{id:'ins4',nombre:'Aceite',stock:5000,unidad:'ml'},
+  {id:'ins5',nombre:'Especias',stock:500,unidad:'g'},{id:'ins6',nombre:'Hielo',stock:20000,unidad:'g'},
+  {id:'ins7',nombre:'Alitas',stock:5000,unidad:'g'},{id:'ins8',nombre:'Pechuga',stock:3000,unidad:'g'},
+  {id:'ins9',nombre:'Bandeja cartón',stock:50,unidad:'u'},{id:'ins10',nombre:'Fernet',stock:10,unidad:'u'},
+  {id:'ins11',nombre:'Coca Cola',stock:20,unidad:'u'},
+];
+const DEFAULT_PRODUCTOS = [
+  {id:'p1',nombre:'Alitas x6',precio:3000,categoria:'comida',emoji:'🍗',insumos:[{insumoId:'ins7',cantidad:720},{insumoId:'ins1',cantidad:80},{insumoId:'ins4',cantidad:50},{insumoId:'ins9',cantidad:1}]},
+  {id:'p2',nombre:'Popcorn x8',precio:2000,categoria:'comida',emoji:'🍿',insumos:[{insumoId:'ins8',cantidad:80},{insumoId:'ins1',cantidad:80},{insumoId:'ins4',cantidad:50},{insumoId:'ins9',cantidad:1}]},
+  {id:'p3',nombre:'Combo 6+4',precio:14000,categoria:'comida',emoji:'🍗🍿',insumos:[{insumoId:'ins7',cantidad:720},{insumoId:'ins8',cantidad:40},{insumoId:'ins9',cantidad:2}]},
+  {id:'p4',nombre:'Canabeer',precio:7000,categoria:'bebida',emoji:'🍺',insumos:[{insumoId:'ins6',cantidad:200}]},
+  {id:'p5',nombre:'Gol / Red / Stout',precio:5000,categoria:'bebida',emoji:'🍺',insumos:[{insumoId:'ins6',cantidad:200}]},
+  {id:'p6',nombre:'Honey',precio:5000,categoria:'bebida',emoji:'🍯',insumos:[{insumoId:'ins6',cantidad:200}]},
+  {id:'p7',nombre:'IPA',precio:5000,categoria:'bebida',emoji:'🍺',insumos:[{insumoId:'ins6',cantidad:200}]},
+  {id:'p8',nombre:'Fernet con Coca',precio:6000,categoria:'bebida',emoji:'🥃',insumos:[{insumoId:'ins10',cantidad:1},{insumoId:'ins11',cantidad:1}]},
+  {id:'p9',nombre:'Gin Tonic',precio:7000,categoria:'bebida',emoji:'🍸',insumos:[{insumoId:'ins6',cantidad:300}]},
+  {id:'p10',nombre:'Promo 2 Pintas',precio:7500,categoria:'promo',emoji:'🎉',insumos:[{insumoId:'ins6',cantidad:400}]},
+  {id:'p11',nombre:'Promo 2 Fernet',precio:11000,categoria:'promo',emoji:'🎉',insumos:[{insumoId:'ins10',cantidad:2},{insumoId:'ins11',cantidad:2}]},
+  {id:'p12',nombre:'Promo 2 Gin Tonic',precio:11000,categoria:'promo',emoji:'🎉',insumos:[{insumoId:'ins6',cantidad:600}]},
+];
+
+let S = {
+  tab:'pedidos', loading:true,
+  productos:[], insumos:[], pedidos:[], historial:[],
+  tituloDia:'', modalTituloDia:false, inputTituloDia:'',
+  toast:null, toastTimer:null,
+  modalNuevoPedido:false, pedidoActivo:null, modalCobro:null, filtroP:'abiertos',
+  nuevoTipo:'mesa', nuevoNombre:'',
+  modalProducto:false, editandoProducto:null,
+  formProducto:{nombre:'',precio:'',categoria:'comida',emoji:'🍗',insumos:[]},
+  filtroProducto:'todos',
+  modalInsumo:false, editandoInsumo:null,
+  formInsumo:{nombre:'',stock:'',unidad:'g'},
+  modalCargaInsumo:null, cantCarga:'',
+  diaSeleccionado:null,
+  modalConfirm:null, // {titulo, msg, onOk}
+};
+function set(p){ Object.assign(S,p); render(); }
+
+// ── FIREBASE ──────────────────────────────────────────────────────────────────
+async function cargarDatos(){
+  try {
+    const [pSnap,iSnap] = await Promise.all([getDoc(doc(db,'config','productos')),getDoc(doc(db,'config','insumos'))]);
+    const productos = pSnap.exists()?pSnap.data().lista:DEFAULT_PRODUCTOS;
+    const insumos   = iSnap.exists()?iSnap.data().lista:DEFAULT_INSUMOS;
+    if(!pSnap.exists()) await setDoc(doc(db,'config','productos'),{lista:DEFAULT_PRODUCTOS});
+    if(!iSnap.exists()) await setDoc(doc(db,'config','insumos'),{lista:DEFAULT_INSUMOS});
+
+    const diaSnap = await getDoc(doc(db,'dias',hoy()));
+    const pedidos = diaSnap.exists()?(diaSnap.data().pedidos||[]):[];
+    const tituloDia = diaSnap.exists()?(diaSnap.data().titulo||''):'';
+    const esDiaNuevo = !diaSnap.exists();
+
+    // Historial sin orderBy para evitar necesidad de índice
+    const histSnap = await getDocs(collection(db,'dias'));
+    const historial = histSnap.docs
+      .map(d=>({fecha:d.id,...d.data()}))
+      .filter(d=>d.fecha!==hoy())
+      .sort((a,b)=>b.fecha.localeCompare(a.fecha));
+
+    Object.assign(S,{productos,insumos,pedidos,tituloDia,historial,loading:false,modalTituloDia:esDiaNuevo});
+    render();
+  } catch(e){
+    toast('Error Firebase: '+e.message,'error');
+    S.loading=false; render();
+  }
+}
+
+async function guardarProductos(lista){ await setDoc(doc(db,'config','productos'),{lista}); }
+async function guardarInsumos(lista){ await setDoc(doc(db,'config','insumos'),{lista}); }
+
+async function guardarPedidosDia(pedidos){
+  const ref = doc(db,'dias',hoy());
+  const snap = await getDoc(ref);
+  if(snap.exists()) await updateDoc(ref,{pedidos});
+  else await setDoc(ref,{pedidos,fecha:hoy(),titulo:S.tituloDia||fechaLegible(hoy()),abierto:true});
+}
+
+async function confirmarTituloDia(){
+  const titulo = S.inputTituloDia.trim()||fechaLegible(hoy());
+  await setDoc(doc(db,'dias',hoy()),{pedidos:S.pedidos||[],fecha:hoy(),titulo,abierto:true});
+  set({tituloDia:titulo,modalTituloDia:false,inputTituloDia:''});
+  toast('✅ Jornada iniciada: '+titulo);
+}
+
+async function cerrarDia(){
+  const cobrados = S.pedidos.filter(p=>p.estado==='cobrado');
+  const total = cobrados.reduce((s,p)=>s+p.total,0);
+  const efectivo = cobrados.filter(p=>p.pago==='efectivo').reduce((s,p)=>s+p.total,0);
+  const digital = cobrados.filter(p=>p.pago==='digital').reduce((s,p)=>s+p.total,0);
+  try {
+    const ref = doc(db,'dias',hoy());
+    const snap = await getDoc(ref);
+    if(snap.exists()){
+      await updateDoc(ref,{abierto:false,cerradoEn:new Date().toISOString(),resumen:{total,efectivo,digital,cantPedidos:cobrados.length}});
+    } else {
+      await setDoc(ref,{pedidos:S.pedidos,fecha:hoy(),titulo:S.tituloDia||fechaLegible(hoy()),abierto:false,cerradoEn:new Date().toISOString(),resumen:{total,efectivo,digital,cantPedidos:cobrados.length}});
+    }
+    // Recargar historial
+    const histSnap = await getDocs(collection(db,'dias'));
+    const historial = histSnap.docs.map(d=>({fecha:d.id,...d.data()})).filter(d=>d.fecha!==hoy()).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+    set({historial});
+    toast('✅ Jornada cerrada y guardada');
+  } catch(e){ toast('Error al cerrar: '+e.message,'error'); }
+}
+
+async function eliminarDia(fecha){
+  try {
+    await deleteDoc(doc(db,'dias',fecha));
+    const historial = S.historial.filter(d=>d.fecha!==fecha);
+    set({historial,diaSeleccionado:null});
+    toast('Jornada eliminada','warn');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+function toast(msg,tipo='ok'){
+  if(S.toastTimer)clearTimeout(S.toastTimer);
+  const t=setTimeout(()=>set({toast:null,toastTimer:null}),3000);
+  set({toast:{msg,tipo},toastTimer:t});
+}
+
+// ── PEDIDOS ───────────────────────────────────────────────────────────────────
+async function crearPedido(){
+  if(!S.nuevoNombre.trim()){toast('Ingresá nombre o número','warn');return;}
+  const p={id:genId(),tipo:S.nuevoTipo,nombre:S.nuevoNombre.trim(),items:[],estado:'abierto',creadoEn:horaActual(),total:0,pago:null};
+  const pedidos=[p,...S.pedidos];
+  set({pedidos,modalNuevoPedido:false,pedidoActivo:p.id,nuevoNombre:''});
+  await guardarPedidosDia(pedidos);
+}
+async function agregarItem(pedidoId,prod){
+  const pedidos=S.pedidos.map(p=>{
+    if(p.id!==pedidoId)return p;
+    const ex=p.items.find(i=>i.productoId===prod.id);
+    const items=ex?p.items.map(i=>i.productoId===prod.id?{...i,cantidad:i.cantidad+1}:i):[...p.items,{productoId:prod.id,nombre:prod.nombre,precio:prod.precio,emoji:prod.emoji,cantidad:1}];
+    return{...p,items,total:items.reduce((s,i)=>s+i.precio*i.cantidad,0)};
+  });
+  set({pedidos}); await guardarPedidosDia(pedidos);
+}
+async function quitarItem(pedidoId,productoId){
+  const pedidos=S.pedidos.map(p=>{
+    if(p.id!==pedidoId)return p;
+    const items=p.items.map(i=>i.productoId===productoId?{...i,cantidad:i.cantidad-1}:i).filter(i=>i.cantidad>0);
+    return{...p,items,total:items.reduce((s,i)=>s+i.precio*i.cantidad,0)};
+  });
+  set({pedidos}); await guardarPedidosDia(pedidos);
+}
+async function cobrarPedido(pedidoId,metodoPago){
+  let ins=[...S.insumos];
+  const pedidos=S.pedidos.map(p=>{
+    if(p.id!==pedidoId)return p;
+    p.items.forEach(item=>{
+      const prod=S.productos.find(pr=>pr.id===item.productoId);
+      if(!prod)return;
+      prod.insumos.forEach(req=>{
+        const idx=ins.findIndex(i=>i.id===req.insumoId);
+        if(idx>=0)ins[idx]={...ins[idx],stock:Math.max(0,ins[idx].stock-req.cantidad*item.cantidad)};
+      });
+    });
+    return{...p,estado:'cobrado',pago:metodoPago,cerradoEn:horaActual()};
+  });
+  set({pedidos,insumos:ins,modalCobro:null,pedidoActivo:S.pedidoActivo===pedidoId?null:S.pedidoActivo});
+  await Promise.all([guardarPedidosDia(pedidos),guardarInsumos(ins)]);
+  toast('✅ Pedido cobrado');
+}
+async function eliminarPedido(pedidoId){
+  const pedidos=S.pedidos.filter(p=>p.id!==pedidoId);
+  set({pedidos,pedidoActivo:S.pedidoActivo===pedidoId?null:S.pedidoActivo});
+  await guardarPedidosDia(pedidos);
+  toast('Pedido eliminado','warn');
+}
+async function cancelarPedido(pedidoId){
+  const pedidos=S.pedidos.map(p=>p.id===pedidoId?{...p,estado:'cancelado'}:p);
+  set({pedidos,pedidoActivo:S.pedidoActivo===pedidoId?null:S.pedidoActivo});
+  await guardarPedidosDia(pedidos); toast('Pedido cancelado','warn');
+}
+
+// ── PRODUCTOS / INSUMOS ───────────────────────────────────────────────────────
+async function guardarProducto(){
+  const f=S.formProducto;
+  if(!f.nombre.trim()||!f.precio){toast('Completá nombre y precio','warn');return;}
+  let lista;
+  if(S.editandoProducto){lista=S.productos.map(p=>p.id===S.editandoProducto?{...p,...f,precio:Number(f.precio)}:p);toast('Actualizado');}
+  else{lista=[...S.productos,{id:genId(),...f,precio:Number(f.precio)}];toast('Agregado ✓');}
+  set({productos:lista,modalProducto:false}); await guardarProductos(lista);
+}
+async function eliminarProducto(id){
+  const lista=S.productos.filter(p=>p.id!==id);
+  set({productos:lista}); await guardarProductos(lista); toast('Eliminado','warn');
+}
+async function guardarInsumo(){
+  const f=S.formInsumo;
+  if(!f.nombre.trim()){toast('Ingresá un nombre','warn');return;}
+  let lista;
+  if(S.editandoInsumo){lista=S.insumos.map(i=>i.id===S.editandoInsumo?{...i,...f,stock:Number(f.stock)}:i);toast('Actualizado');}
+  else{lista=[...S.insumos,{id:genId(),...f,stock:Number(f.stock)}];toast('Agregado ✓');}
+  set({insumos:lista,modalInsumo:false}); await guardarInsumos(lista);
+}
+async function cargarStockInsumo(){
+  const cant=Number(S.cantCarga);
+  if(!cant||isNaN(cant)){toast('Cantidad inválida','warn');return;}
+  const lista=S.insumos.map(i=>i.id===S.modalCargaInsumo?{...i,stock:i.stock+cant}:i);
+  set({insumos:lista,modalCargaInsumo:null,cantCarga:''}); await guardarInsumos(lista); toast('Stock actualizado ✓');
+}
+async function eliminarInsumo(id){
+  if(S.productos.some(p=>p.insumos.some(i=>i.insumoId===id))){toast('Insumo en uso','error');return;}
+  const lista=S.insumos.filter(i=>i.id!==id);
+  set({insumos:lista}); await guardarInsumos(lista); toast('Eliminado','warn');
+}
+
+// ── DOM ───────────────────────────────────────────────────────────────────────
+const root=document.getElementById('root');
+function el(tag,props={},children=[]){
+  const e=document.createElement(tag);
+  Object.entries(props).forEach(([k,v])=>{
+    if(k==='style'&&typeof v==='object')Object.assign(e.style,v);
+    else if(k.startsWith('on'))e.addEventListener(k.slice(2).toLowerCase(),v);
+    else e.setAttribute(k,v);
+  });
+  children.forEach(c=>{if(c==null)return;e.appendChild(typeof c==='string'?document.createTextNode(c):c);});
+  return e;
+}
+const is=s=>({width:'100%',background:'#0f0f13',border:'1px solid #333',borderRadius:'10px',padding:'10px 12px',color:'#f0ece4',fontSize:'14px',outline:'none',...s});
+const CC={comida:'#f5a623',bebida:'#38bdf8',promo:'#a78bfa'};
+const TC={mesa:'#38bdf8',delivery:'#f97316'};
+
+function makeModal(title,onClose,content){
+  const ov=el('div',{style:{position:'fixed',inset:'0',background:'rgba(0,0,0,.78)',zIndex:'500',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px'},onClick:e=>{if(e.target===ov&&onClose)onClose();}});
+  const box=el('div',{style:{background:'#1c1c27',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'480px',maxHeight:'90vh',overflowY:'auto',border:'1px solid #2e2e3e'}});
+  const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}});
+  hdr.appendChild(el('h3',{style:{margin:'0',fontWeight:'800',color:'#f5a623'}},[title]));
+  if(onClose)hdr.appendChild(el('button',{style:{background:'none',border:'none',color:'#888',fontSize:'22px',cursor:'pointer'},onClick:onClose},['✕']));
+  box.appendChild(hdr); box.appendChild(content); ov.appendChild(box); return ov;
+}
+
+function confirmDialog(titulo,msg,onOk){
+  set({modalConfirm:{titulo,msg,onOk}});
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function render(){
+  root.innerHTML='';
+  if(S.loading){root.appendChild(el('div',{style:{padding:'60px',textAlign:'center',color:'#888'}},['Cargando...',el('div',{className:'spinner'})]));return;}
+
+  const cobradosHoy=S.pedidos.filter(p=>p.estado==='cobrado');
+  const totalHoy=cobradosHoy.reduce((s,p)=>s+p.total,0);
+
+  root.appendChild(el('header',{style:{background:'#1a1a22',borderBottom:'2px solid #f5a623',padding:'12px 16px',display:'flex',alignItems:'center',gap:'10px',position:'sticky',top:'0',zIndex:'100'}},[
+    el('span',{style:{fontSize:'24px'}},['🍺🍗']),
+    el('div',{},[
+      el('div',{style:{fontSize:'16px',fontWeight:'900',fontFamily:"'Black Han Sans',sans-serif",color:'#f5a623'}},['ZUTTO BAR']),
+      el('div',{style:{fontSize:'10px',color:'#888',fontWeight:'700',cursor:'pointer'},onClick:()=>set({modalTituloDia:true,inputTituloDia:S.tituloDia})},[
+        '📅 '+(S.tituloDia||fechaLegible(hoy()))+' ✏️'
+      ]),
+    ]),
+    el('div',{style:{marginLeft:'auto',background:'#0f0f13',borderRadius:'8px',padding:'5px 12px',border:'1px solid #2a2a35'}},[
+      el('div',{style:{fontSize:'10px',color:'#666'}},['HOY']),
+      el('div',{style:{fontWeight:'900',color:'#4ade80',fontSize:'14px'}},[fmt(totalHoy)]),
+    ]),
+  ]));
+
+  const wrap=el('div',{style:{maxWidth:'600px',margin:'0 auto',paddingBottom:'80px'}});
+  if(S.tab==='pedidos')   wrap.appendChild(renderPedidos());
+  if(S.tab==='productos') wrap.appendChild(renderProductos());
+  if(S.tab==='insumos')   wrap.appendChild(renderInsumos());
+  if(S.tab==='caja')      wrap.appendChild(renderCaja());
+  if(S.tab==='historial') wrap.appendChild(renderHistorial());
+  root.appendChild(wrap);
+
+  const tabs=[{id:'pedidos',label:'Pedidos',icon:'🧾'},{id:'productos',label:'Productos',icon:'📦'},{id:'insumos',label:'Insumos',icon:'🏪'},{id:'caja',label:'Caja',icon:'💰'},{id:'historial',label:'Historial',icon:'📅'}];
+  root.appendChild(el('nav',{style:{position:'fixed',bottom:'0',left:'0',right:'0',background:'#1a1a22',borderTop:'1px solid #2a2a35',display:'flex',zIndex:'100'}},
+    tabs.map(t=>el('button',{style:{flex:'1',padding:'10px 0',border:'none',background:S.tab===t.id?'#f5a62318':'transparent',color:S.tab===t.id?'#f5a623':'#555',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',borderTop:S.tab===t.id?'2px solid #f5a623':'2px solid transparent'},onClick:()=>set({tab:t.id})},[
+      el('span',{style:{fontSize:'18px'}},[t.icon]),
+      el('span',{style:{fontSize:'9px',fontWeight:'700'}},[t.label]),
+    ]))
+  ));
+
+  if(S.modalTituloDia)   root.appendChild(renderModalTituloDia());
+  if(S.modalNuevoPedido) root.appendChild(renderModalNuevoPedido());
+  if(S.modalCobro)       root.appendChild(renderModalCobro());
+  if(S.modalProducto)    root.appendChild(renderModalProducto());
+  if(S.modalInsumo)      root.appendChild(renderModalInsumo());
+  if(S.modalCargaInsumo) root.appendChild(renderModalCargaInsumo());
+  if(S.modalConfirm)     root.appendChild(renderModalConfirm());
+
+  if(S.toast){
+    const bg=S.toast.tipo==='error'?'#ef4444':S.toast.tipo==='warn'?'#f59e0b':'#22c55e';
+    root.appendChild(el('div',{style:{position:'fixed',bottom:'90px',left:'50%',transform:'translateX(-50%)',background:bg,color:'#fff',padding:'11px 22px',borderRadius:'12px',fontWeight:'700',fontSize:'13px',zIndex:'9999',whiteSpace:'nowrap',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}},[S.toast.msg]));
+  }
+}
+
+// ── MODAL CONFIRM ─────────────────────────────────────────────────────────────
+function renderModalConfirm(){
+  const {titulo,msg,onOk}=S.modalConfirm;
+  const cont=el('div');
+  cont.appendChild(el('p',{style:{color:'#aaa',marginBottom:'20px',fontSize:'14px'}},[msg]));
+  const btns=el('div',{style:{display:'flex',gap:'10px'}});
+  btns.appendChild(el('button',{style:{flex:'1',background:'#2a2a35',color:'#888',border:'none',borderRadius:'10px',padding:'12px',fontWeight:'700',cursor:'pointer'},onClick:()=>set({modalConfirm:null})},['Cancelar']));
+  btns.appendChild(el('button',{style:{flex:'1',background:'#ef4444',color:'#fff',border:'none',borderRadius:'10px',padding:'12px',fontWeight:'900',cursor:'pointer'},onClick:()=>{set({modalConfirm:null});onOk();}},['Eliminar']));
+  cont.appendChild(btns);
+  return makeModal(titulo,()=>set({modalConfirm:null}),cont);
+}
+
+// ── MODAL TÍTULO DÍA ──────────────────────────────────────────────────────────
+function renderModalTituloDia(){
+  const esDiaNuevo=!S.tituloDia;
+  const cont=el('div',{style:{display:'flex',flexDirection:'column',gap:'14px'}});
+  cont.appendChild(el('p',{style:{color:'#888',fontSize:'13px'}},[esDiaNuevo?'Poné un nombre para identificar la jornada de hoy en el historial.':'Cambiá el nombre de la jornada.']));
+  const i=el('input',{style:is(),placeholder:'Ej: Viernes noche, Evento fútbol...',value:S.inputTituloDia});
+  i.addEventListener('input',e=>S.inputTituloDia=e.target.value);
+  i.addEventListener('keydown',e=>e.key==='Enter'&&confirmarTituloDia());
+  cont.appendChild(i);
+  cont.appendChild(el('button',{style:{background:'#f5a623',color:'#0f0f13',border:'none',borderRadius:'10px',padding:'14px',fontWeight:'900',fontSize:'15px',cursor:'pointer'},onClick:confirmarTituloDia},['✅ Confirmar']));
+  if(!esDiaNuevo)cont.appendChild(el('button',{style:{background:'transparent',color:'#888',border:'1px solid #333',borderRadius:'10px',padding:'12px',fontWeight:'700',fontSize:'13px',cursor:'pointer'},onClick:()=>set({modalTituloDia:false})},['Cancelar']));
+  setTimeout(()=>i.focus(),50);
+  return makeModal(esDiaNuevo?'🌅 Nueva jornada':'✏️ Editar jornada',esDiaNuevo?null:()=>set({modalTituloDia:false}),cont);
+}
+
+// ── RENDER PEDIDOS ────────────────────────────────────────────────────────────
+function renderPedidos(){
+  const div=el('div',{style:{padding:'16px'}});
+  const CL={comida:'🍗 Comida',bebida:'🍺 Bebida',promo:'🎉 Promos'};
+  const topRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'16px'}});
+  topRow.appendChild(el('button',{style:{background:'#f5a623',color:'#0f0f13',border:'none',borderRadius:'10px',padding:'10px 18px',fontWeight:'800',fontSize:'14px',cursor:'pointer',flex:'1'},onClick:()=>set({modalNuevoPedido:true,nuevoNombre:'',nuevoTipo:'mesa'})},['+ Nuevo Pedido']));
+  const filtros=el('div',{style:{display:'flex',gap:'4px',background:'#15151e',borderRadius:'8px',padding:'4px'}});
+  ['abiertos','cobrados','cancelado'].forEach(f=>{
+    filtros.appendChild(el('button',{style:{background:S.filtroP===f?'#f5a623':'transparent',color:S.filtroP===f?'#0f0f13':'#888',border:'none',borderRadius:'6px',padding:'6px 8px',fontWeight:'700',fontSize:'11px',cursor:'pointer'},onClick:()=>set({filtroP:f})},[f==='abiertos'?'Abiertos':f==='cobrados'?'Cobrados':'Cancel.']));
+  });
+  topRow.appendChild(filtros); div.appendChild(topRow);
+
+  const ped=S.pedidos.find(p=>p.id===S.pedidoActivo&&p.estado==='abierto');
+  if(ped){
+    const card=el('div',{style:{background:'#1c1c27',borderRadius:'14px',padding:'16px',marginBottom:'16px',border:'2px solid #f5a623'}});
+    const ph=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}});
+    const phL=el('div',{style:{display:'flex',alignItems:'center',gap:'8px'}});
+    phL.appendChild(el('span',{style:{fontSize:'16px',fontWeight:'900'}},[ped.nombre]));
+    phL.appendChild(el('span',{style:{background:TC[ped.tipo]+'22',color:TC[ped.tipo],border:`1px solid ${TC[ped.tipo]}55`,borderRadius:'6px',padding:'2px 8px',fontSize:'11px',fontWeight:'700'}},[ped.tipo==='mesa'?'🪑 Mesa':'🛵 Delivery']));
+    ph.appendChild(phL);
+    ph.appendChild(el('button',{style:{background:'none',border:'none',color:'#888',fontSize:'20px',cursor:'pointer'},onClick:()=>set({pedidoActivo:null})},['✕']));
+    card.appendChild(ph);
+    if(!ped.items.length){card.appendChild(el('p',{style:{color:'#444',textAlign:'center',margin:'12px 0',fontSize:'13px'}},['Seleccioná productos ↓']));}
+    else{
+      const iD=el('div',{style:{marginBottom:'12px'}});
+      ped.items.forEach(item=>{
+        const r=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'8px 0',borderBottom:'1px solid #2a2a35'}});
+        r.appendChild(el('span',{style:{fontSize:'18px'}},[item.emoji]));
+        r.appendChild(el('span',{style:{flex:'1',fontWeight:'700',fontSize:'13px'}},[item.nombre]));
+        const ctrl=el('div',{style:{display:'flex',alignItems:'center',gap:'6px'}});
+        ctrl.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#f0ece4',width:'28px',height:'28px',borderRadius:'6px',cursor:'pointer',fontWeight:'900'},onClick:()=>quitarItem(ped.id,item.productoId)},['−']));
+        ctrl.appendChild(el('span',{style:{fontWeight:'800',minWidth:'20px',textAlign:'center'}},[String(item.cantidad)]));
+        ctrl.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#f0ece4',width:'28px',height:'28px',borderRadius:'6px',cursor:'pointer',fontWeight:'900'},onClick:()=>agregarItem(ped.id,S.productos.find(p=>p.id===item.productoId))},['+'  ]));
+        r.appendChild(ctrl);
+        r.appendChild(el('span',{style:{fontWeight:'800',color:'#f5a623',minWidth:'70px',textAlign:'right',fontSize:'13px'}},[fmt(item.precio*item.cantidad)]));
+        iD.appendChild(r);
+      });
+      card.appendChild(iD);
+    }
+    const tR=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}});
+    tR.appendChild(el('span',{style:{fontWeight:'700',color:'#888',fontSize:'13px'}},['TOTAL']));
+    tR.appendChild(el('span',{style:{fontWeight:'900',fontSize:'24px',color:'#4ade80'}},[fmt(ped.total)]));
+    card.appendChild(tR);
+    const bR=el('div',{style:{display:'flex',gap:'8px',marginBottom:'16px'}});
+    const ok=ped.items.length>0;
+    bR.appendChild(el('button',{style:{flex:'2',background:ok?'#22c55e':'#2a2a35',color:ok?'#fff':'#555',border:'none',borderRadius:'10px',padding:'13px 0',fontWeight:'800',fontSize:'14px',cursor:ok?'pointer':'not-allowed'},onClick:()=>ok&&set({modalCobro:ped.id})},['💳 Cobrar pedido']));
+    bR.appendChild(el('button',{style:{flex:'1',background:'transparent',color:'#ef4444',border:'1px solid #ef444444',borderRadius:'10px',padding:'13px 0',fontWeight:'700',fontSize:'13px',cursor:'pointer'},onClick:()=>cancelarPedido(ped.id)},['Cancelar']));
+    card.appendChild(bR);
+    card.appendChild(el('p',{style:{fontSize:'11px',color:'#555',margin:'0 0 10px',fontWeight:'800',letterSpacing:'1px'}},['AGREGAR AL PEDIDO']));
+    ['comida','bebida','promo'].forEach(cat=>{
+      const prods=S.productos.filter(p=>p.categoria===cat);
+      if(!prods.length)return;
+      card.appendChild(el('p',{style:{fontSize:'11px',color:CC[cat],margin:'0 0 7px',fontWeight:'800'}},[CL[cat]]));
+      const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'7px',marginBottom:'14px'}});
+      prods.forEach(prod=>{
+        grid.appendChild(el('button',{style:{background:'#0f0f13',border:`1px solid ${CC[cat]}33`,borderRadius:'10px',padding:'10px',cursor:'pointer',display:'flex',alignItems:'center',gap:'8px'},onClick:()=>agregarItem(ped.id,prod)},[
+          el('span',{style:{fontSize:'20px'}},[prod.emoji]),
+          el('div',{},[el('div',{style:{fontSize:'12px',fontWeight:'700',color:'#f0ece4',lineHeight:'1.3'}},[prod.nombre]),el('div',{style:{fontSize:'12px',color:CC[cat],fontWeight:'800'}},[fmt(prod.precio)])]),
+        ]));
+      });
+      card.appendChild(grid);
+    });
+    div.appendChild(card);
+  }
+
+  const filtrados=S.pedidos.filter(p=>S.filtroP==='abiertos'?p.estado==='abierto':S.filtroP==='cobrados'?p.estado==='cobrado':p.estado==='cancelado');
+  if(!filtrados.length){div.appendChild(el('div',{style:{textAlign:'center',color:'#333',padding:'40px 0',fontSize:'14px'}},['No hay pedidos '+S.filtroP]));}
+  else{
+    const lista=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}});
+    filtrados.forEach(p=>{
+      const c=el('div',{style:{background:'#1c1c27',borderRadius:'12px',padding:'12px 14px',border:S.pedidoActivo===p.id?'2px solid #f5a623':'1px solid #2a2a35',cursor:p.estado==='abierto'?'pointer':'default',opacity:p.estado==='cancelado'?'0.4':'1'}});
+      const r=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center'}});
+      const l=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',flex:'1',cursor:p.estado==='abierto'?'pointer':'default'},onClick:()=>p.estado==='abierto'&&set({pedidoActivo:p.id})});
+      l.appendChild(el('span',{style:{fontWeight:'900',fontSize:'14px'}},[p.nombre]));
+      l.appendChild(el('span',{},[p.tipo==='delivery'?'🛵':'🪑']));
+      if(p.estado==='cobrado')l.appendChild(el('span',{style:{background:'#22c55e22',color:'#22c55e',borderRadius:'5px',padding:'1px 7px',fontSize:'10px',fontWeight:'700',border:'1px solid #22c55e44'}},['✅ '+p.pago]));
+      if(p.estado==='cancelado')l.appendChild(el('span',{style:{background:'#ef444422',color:'#ef4444',borderRadius:'5px',padding:'1px 7px',fontSize:'10px',fontWeight:'700'}},['cancelado']));
+      r.appendChild(l);
+      const rRight=el('div',{style:{display:'flex',alignItems:'center',gap:'8px'}});
+      rRight.appendChild(el('span',{style:{fontWeight:'900',color:'#f5a623',fontSize:'15px'}},[fmt(p.total)]));
+      rRight.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#ef4444',borderRadius:'6px',padding:'4px 8px',fontSize:'12px',cursor:'pointer'},onClick:e=>{e.stopPropagation();confirmDialog('Eliminar pedido','¿Eliminar el pedido de '+p.nombre+'? Esta acción no se puede deshacer.',()=>eliminarPedido(p.id));}},['🗑️']));
+      r.appendChild(rRight); c.appendChild(r);
+      c.appendChild(el('div',{style:{fontSize:'11px',color:'#444',marginTop:'3px'}},[`${p.items.length} productos · ${p.creadoEn}${p.cerradoEn?' → '+p.cerradoEn:''}`]));
+      lista.appendChild(c);
+    });
+    div.appendChild(lista);
+  }
+  return div;
+}
+
+// ── RENDER PRODUCTOS ──────────────────────────────────────────────────────────
+function renderProductos(){
+  const div=el('div',{style:{padding:'16px'}});
+  div.appendChild(el('button',{style:{background:'#f5a623',color:'#0f0f13',border:'none',borderRadius:'10px',padding:'10px 18px',fontWeight:'800',fontSize:'14px',cursor:'pointer',width:'100%',marginBottom:'16px'},onClick:()=>set({modalProducto:true,editandoProducto:null,formProducto:{nombre:'',precio:'',categoria:'comida',emoji:'🍗',insumos:[]}})},['+ Agregar Producto']));
+  const filtros=el('div',{style:{display:'flex',gap:'6px',marginBottom:'16px'}});
+  ['todos','comida','bebida','promo'].forEach(c=>{
+    filtros.appendChild(el('button',{style:{background:S.filtroProducto===c?(CC[c]||'#f5a623'):'#1c1c27',color:S.filtroProducto===c?'#0f0f13':'#888',border:'none',borderRadius:'8px',padding:'6px 14px',fontWeight:'700',fontSize:'12px',cursor:'pointer'},onClick:()=>set({filtroProducto:c})},[c.charAt(0).toUpperCase()+c.slice(1)]));
+  });
+  div.appendChild(filtros);
+  const lista=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}});
+  const filtrados=S.filtroProducto==='todos'?S.productos:S.productos.filter(p=>p.categoria===S.filtroProducto);
+  filtrados.forEach(p=>{
+    const c=el('div',{style:{background:'#1c1c27',borderRadius:'12px',padding:'12px 14px',border:'1px solid #2a2a35',display:'flex',alignItems:'center',gap:'10px'}});
+    c.appendChild(el('span',{style:{fontSize:'26px'}},[p.emoji]));
+    const info=el('div',{style:{flex:'1'}});
+    info.appendChild(el('div',{style:{fontWeight:'800',fontSize:'14px'}},[p.nombre]));
+    const tags=el('div',{style:{display:'flex',gap:'6px',marginTop:'3px'}});
+    tags.appendChild(el('span',{style:{background:(CC[p.categoria]||'#888')+'22',color:CC[p.categoria]||'#888',border:`1px solid ${CC[p.categoria]||'#888'}55`,borderRadius:'6px',padding:'2px 8px',fontSize:'11px',fontWeight:'700'}},[p.categoria]));
+    tags.appendChild(el('span',{style:{fontSize:'11px',color:'#888'}},[p.insumos.length+' insumos']));
+    info.appendChild(tags); c.appendChild(info);
+    const right=el('div',{style:{textAlign:'right'}});
+    right.appendChild(el('div',{style:{fontWeight:'900',color:'#f5a623',fontSize:'16px'}},[fmt(p.precio)]));
+    const btns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
+    btns.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#f0ece4',borderRadius:'6px',padding:'4px 10px',fontSize:'12px',cursor:'pointer'},onClick:()=>set({modalProducto:true,editandoProducto:p.id,formProducto:{nombre:p.nombre,precio:String(p.precio),categoria:p.categoria,emoji:p.emoji,insumos:[...p.insumos]}})},['✏️']));
+    btns.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#ef4444',borderRadius:'6px',padding:'4px 10px',fontSize:'12px',cursor:'pointer'},onClick:()=>confirmDialog('Eliminar producto','¿Eliminar "'+p.nombre+'"?',()=>eliminarProducto(p.id))},['🗑️']));
+    right.appendChild(btns); c.appendChild(right); lista.appendChild(c);
+  });
+  div.appendChild(lista); return div;
+}
+
+// ── RENDER INSUMOS ────────────────────────────────────────────────────────────
+function renderInsumos(){
+  const div=el('div',{style:{padding:'16px'}});
+  div.appendChild(el('button',{style:{background:'#f5a623',color:'#0f0f13',border:'none',borderRadius:'10px',padding:'10px 18px',fontWeight:'800',fontSize:'14px',cursor:'pointer',width:'100%',marginBottom:'16px'},onClick:()=>set({modalInsumo:true,editandoInsumo:null,formInsumo:{nombre:'',stock:'',unidad:'g'}})},['+ Agregar Insumo']));
+  const lista=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}});
+  S.insumos.forEach(ins=>{
+    const color=ins.stock<=0?'#ef4444':ins.stock<500?'#f59e0b':'#22c55e';
+    const usadoEn=S.productos.filter(p=>p.insumos.some(i=>i.insumoId===ins.id));
+    const c=el('div',{style:{background:'#1c1c27',borderRadius:'12px',padding:'12px 14px',border:`1px solid ${color}33`}});
+    const top=el('div',{style:{display:'flex',justifyContent:'space-between'}});
+    const left=el('div');
+    left.appendChild(el('div',{style:{fontWeight:'800',fontSize:'14px'}},[ins.nombre]));
+    left.appendChild(el('div',{style:{fontSize:'12px',color:'#666',marginTop:'2px'}},['Usado en: '+(usadoEn.length?usadoEn.map(p=>p.nombre).join(', '):'ningún producto')]));
+    top.appendChild(left);
+    const right=el('div',{style:{textAlign:'right'}});
+    right.appendChild(el('div',{style:{fontWeight:'900',color:color,fontSize:'16px'}},[ins.stock+' '+ins.unidad]));
+    if(ins.stock<=0)right.appendChild(el('div',{style:{fontSize:'10px',color:'#ef4444',fontWeight:'700'}},['⚠️ SIN STOCK']));
+    top.appendChild(right); c.appendChild(top);
+    const btns=el('div',{style:{display:'flex',gap:'6px',marginTop:'10px'}});
+    btns.appendChild(el('button',{style:{flex:'2',background:'#22c55e22',color:'#22c55e',border:'1px solid #22c55e44',borderRadius:'8px',padding:'6px 0',fontWeight:'700',fontSize:'12px',cursor:'pointer'},onClick:()=>set({modalCargaInsumo:ins.id,cantCarga:''})},['+ Cargar stock']));
+    btns.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#f0ece4',borderRadius:'8px',padding:'6px 10px',cursor:'pointer',fontSize:'12px'},onClick:()=>set({modalInsumo:true,editandoInsumo:ins.id,formInsumo:{nombre:ins.nombre,stock:String(ins.stock),unidad:ins.unidad}})},['✏️']));
+    btns.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#ef4444',borderRadius:'8px',padding:'6px 10px',cursor:'pointer',fontSize:'12px'},onClick:()=>confirmDialog('Eliminar insumo','¿Eliminar "'+ins.nombre+'"?',()=>eliminarInsumo(ins.id))},['🗑️']));
+    c.appendChild(btns); lista.appendChild(c);
+  });
+  div.appendChild(lista); return div;
+}
+
+// ── RENDER CAJA ───────────────────────────────────────────────────────────────
+function renderCaja(){
+  const cobrados=S.pedidos.filter(p=>p.estado==='cobrado');
+  const total=cobrados.reduce((s,p)=>s+p.total,0);
+  const efectivo=cobrados.filter(p=>p.pago==='efectivo').reduce((s,p)=>s+p.total,0);
+  const digital=cobrados.filter(p=>p.pago==='digital').reduce((s,p)=>s+p.total,0);
+  const ventasProd={};
+  cobrados.forEach(p=>p.items.forEach(it=>{
+    if(!ventasProd[it.nombre])ventasProd[it.nombre]={cantidad:0,total:0,emoji:it.emoji};
+    ventasProd[it.nombre].cantidad+=it.cantidad; ventasProd[it.nombre].total+=it.precio*it.cantidad;
+  }));
+  const ranking=Object.entries(ventasProd).sort(([,a],[,b])=>b.cantidad-a.cantidad);
+  const div=el('div',{style:{padding:'16px'}});
+
+  // Título jornada
+  const tj=el('div',{style:{background:'#1c1c27',borderRadius:'12px',padding:'12px 14px',marginBottom:'12px',border:'1px solid #2a2a35',display:'flex',justifyContent:'space-between',alignItems:'center'}});
+  tj.appendChild(el('div',{},[el('div',{style:{fontSize:'11px',color:'#888',fontWeight:'700'}},['JORNADA']),el('div',{style:{fontWeight:'900',fontSize:'15px',color:'#f5a623'}},[S.tituloDia||fechaLegible(hoy())])]));
+  tj.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#888',borderRadius:'8px',padding:'6px 10px',cursor:'pointer',fontSize:'12px'},onClick:()=>set({modalTituloDia:true,inputTituloDia:S.tituloDia})},['✏️']));
+  div.appendChild(tj);
+
+  const tc=el('div',{style:{background:'linear-gradient(135deg,#22c55e22,#22c55e0a)',border:'1px solid #22c55e44',borderRadius:'14px',padding:'16px',marginBottom:'10px'}});
+  tc.appendChild(el('div',{style:{fontSize:'12px',color:'#22c55e',fontWeight:'700',marginBottom:'4px'}},['💰 TOTAL DEL DÍA']));
+  tc.appendChild(el('div',{style:{fontSize:'34px',fontWeight:'900',color:'#22c55e'}},[fmt(total)]));
+  tc.appendChild(el('div',{style:{fontSize:'12px',color:'#888',marginTop:'4px'}},[cobrados.length+' pedidos cobrados']));
+  div.appendChild(tc);
+
+  const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'16px'}});
+  [[fmt(efectivo),'💵 EFECTIVO','#f5a623',cobrados.filter(p=>p.pago==='efectivo').length+' pedidos'],
+   [fmt(digital),'📱 DIGITAL','#38bdf8',cobrados.filter(p=>p.pago==='digital').length+' pedidos'],
+   [String(cobrados.filter(p=>p.tipo==='mesa').length),'🪑 MESAS','#a78bfa',''],
+   [String(cobrados.filter(p=>p.tipo==='delivery').length),'🛵 DELIVERY','#f97316',''],
+  ].forEach(([v,l,c,s])=>{
+    const card=el('div',{style:{background:'#1c1c27',border:'1px solid #2a2a35',borderRadius:'14px',padding:'14px'}});
+    card.appendChild(el('div',{style:{fontSize:'11px',color:'#888',fontWeight:'700'}},[l]));
+    card.appendChild(el('div',{style:{fontSize:'22px',fontWeight:'900',color:c,marginTop:'4px'}},[v]));
+    if(s)card.appendChild(el('div',{style:{fontSize:'11px',color:'#666'}},[s]));
+    grid.appendChild(card);
+  });
+  div.appendChild(grid);
+
+  const rank=el('div',{style:{background:'#1c1c27',border:'1px solid #2a2a35',borderRadius:'14px',padding:'16px',marginBottom:'14px'}});
+  rank.appendChild(el('div',{style:{fontSize:'12px',color:'#888',fontWeight:'700',marginBottom:'12px'}},['📊 PRODUCTOS MÁS VENDIDOS']));
+  if(!ranking.length)rank.appendChild(el('p',{style:{color:'#444',textAlign:'center',fontSize:'13px'}},['Sin ventas aún']));
+  else ranking.forEach(([nombre,data],idx)=>{
+    const r=el('div',{style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',borderBottom:idx<ranking.length-1?'1px solid #2a2a35':'none'}});
+    r.appendChild(el('span',{style:{fontSize:'10px',color:'#555',fontWeight:'900',minWidth:'16px'}},['#'+(idx+1)]));
+    r.appendChild(el('span',{style:{fontSize:'18px'}},[data.emoji]));
+    r.appendChild(el('span',{style:{flex:'1',fontWeight:'700',fontSize:'13px'}},[nombre]));
+    r.appendChild(el('span',{style:{fontSize:'12px',color:'#888'}},[data.cantidad+' u.']));
+    r.appendChild(el('span',{style:{fontWeight:'800',color:'#f5a623',fontSize:'13px'}},[fmt(data.total)]));
+    rank.appendChild(r);
+  });
+  div.appendChild(rank);
+
+  const abiertos=S.pedidos.filter(p=>p.estado==='abierto').length;
+  div.appendChild(el('button',{
+    style:{width:'100%',background:abiertos>0?'#2a2a35':'#f5a623',color:abiertos>0?'#555':'#0f0f13',border:'none',borderRadius:'12px',padding:'14px',fontWeight:'900',fontSize:'14px',cursor:abiertos>0?'not-allowed':'pointer'},
+    onClick:()=>{ if(abiertos===0) confirmDialog('Cerrar jornada','¿Cerrar la jornada "' +(S.tituloDia||fechaLegible(hoy()))+ '"? Se guardará en el historial.',cerrarDia); }
+  },[abiertos>0?`⚠️ Hay ${abiertos} pedido(s) abierto(s)`:'📅 Cerrar la jornada y guardar']));
+  return div;
+}
+
+// ── RENDER HISTORIAL ──────────────────────────────────────────────────────────
+function renderHistorial(){
+  const div=el('div',{style:{padding:'16px'}});
+  div.appendChild(el('h3',{style:{marginBottom:'16px',color:'#f5a623',fontWeight:'900'}},['📅 Historial de Jornadas']));
+  if(!S.historial.length){div.appendChild(el('div',{style:{textAlign:'center',color:'#444',padding:'40px 0',fontSize:'14px'}},['Todavía no hay jornadas cerradas']));return div;}
+  S.historial.forEach(dia=>{
+    const res=dia.resumen||{};
+    const card=el('div',{style:{background:'#1c1c27',borderRadius:'14px',padding:'16px',marginBottom:'10px',border:'1px solid #2a2a35'}});
+    const top=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'},onClick:()=>set({diaSeleccionado:S.diaSeleccionado===dia.fecha?null:dia.fecha})});
+    const left=el('div');
+    left.appendChild(el('div',{style:{fontWeight:'900',fontSize:'15px'}},[dia.titulo||fechaLegible(dia.fecha)]));
+    left.appendChild(el('div',{style:{fontSize:'11px',color:'#666',marginTop:'2px'}},[fechaLegible(dia.fecha)+' · '+(res.cantPedidos||0)+' pedidos']));
+    top.appendChild(left);
+    const right=el('div',{style:{textAlign:'right',display:'flex',alignItems:'center',gap:'10px'}});
+    const info=el('div',{style:{textAlign:'right'}});
+    info.appendChild(el('div',{style:{fontWeight:'900',color:'#4ade80',fontSize:'18px'}},[fmt(res.total||0)]));
+    info.appendChild(el('span',{style:{fontSize:'10px',color:dia.abierto?'#f59e0b':'#22c55e',fontWeight:'700'}},[dia.abierto?'⚠️ SIN CERRAR':'✅ CERRADO']));
+    right.appendChild(info);
+    right.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#ef4444',borderRadius:'8px',padding:'6px 10px',cursor:'pointer',fontSize:'13px'},onClick:e=>{e.stopPropagation();confirmDialog('Eliminar jornada','¿Eliminar la jornada "'+(dia.titulo||fechaLegible(dia.fecha))+'"? No se puede deshacer.',()=>eliminarDia(dia.fecha));}},['🗑️']));
+    top.appendChild(right); card.appendChild(top);
+
+    if(S.diaSeleccionado===dia.fecha){
+      const det=el('div',{style:{marginTop:'14px',borderTop:'1px solid #2a2a35',paddingTop:'14px'}});
+      const g=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px'}});
+      [[fmt(res.efectivo||0),'💵 Efectivo','#f5a623'],[fmt(res.digital||0),'📱 Digital','#38bdf8']].forEach(([v,l,c])=>{
+        const cc=el('div',{style:{background:'#0f0f13',borderRadius:'10px',padding:'10px'}});
+        cc.appendChild(el('div',{style:{fontSize:'11px',color:'#888'}},[l]));
+        cc.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'900',color:c}},[v]));
+        g.appendChild(cc);
+      });
+      det.appendChild(g);
+      if(dia.pedidos&&dia.pedidos.filter(p=>p.estado==='cobrado').length){
+        det.appendChild(el('div',{style:{fontSize:'11px',color:'#888',fontWeight:'700',marginBottom:'8px'}},['PEDIDOS COBRADOS']));
+        dia.pedidos.filter(p=>p.estado==='cobrado').forEach(p=>{
+          const pr=el('div',{style:{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #1a1a22',fontSize:'13px'}});
+          pr.appendChild(el('span',{},[p.nombre+' '+(p.tipo==='delivery'?'🛵':'🪑')]));
+          pr.appendChild(el('span',{style:{color:'#f5a623',fontWeight:'800'}},[fmt(p.total)]));
+          det.appendChild(pr);
+        });
+      }
+      card.appendChild(det);
+    }
+    div.appendChild(card);
+  });
+  return div;
+}
+
+// ── MODALES ───────────────────────────────────────────────────────────────────
+function renderModalNuevoPedido(){
+  const cont=el('div',{style:{display:'flex',flexDirection:'column',gap:'12px'}});
+  const tb=el('div',{style:{display:'flex',gap:'8px'}});
+  ['mesa','delivery'].forEach(t=>tb.appendChild(el('button',{style:{flex:'1',padding:'12px',borderRadius:'10px',border:'none',background:S.nuevoTipo===t?TC[t]:'#2a2a35',color:S.nuevoTipo===t?'#0f0f13':'#888',fontWeight:'800',cursor:'pointer',fontSize:'14px'},onClick:()=>set({nuevoTipo:t})},[t==='mesa'?'🪑 Mesa':'🛵 Delivery'])));
+  cont.appendChild(tb);
+  const i=el('input',{style:is(),placeholder:S.nuevoTipo==='mesa'?'N° de mesa o nombre...':'Nombre del cliente...',value:S.nuevoNombre});
+  i.addEventListener('input',e=>S.nuevoNombre=e.target.value);
+  i.addEventListener('keydown',e=>e.key==='Enter'&&crearPedido());
+  cont.appendChild(i);
+  cont.appendChild(el('button',{style:{background:'#f5a623',color:'#0f0f13',border:'none',borderRadius:'10px',padding:'14px',fontWeight:'900',fontSize:'15px',cursor:'pointer'},onClick:crearPedido},['Crear Pedido']));
+  setTimeout(()=>i.focus(),50);
+  return makeModal('Nuevo Pedido',()=>set({modalNuevoPedido:false}),cont);
+}
+
+function renderModalCobro(){
+  const p=S.pedidos.find(x=>x.id===S.modalCobro);
+  const cont=el('div');
+  cont.appendChild(el('div',{style:{textAlign:'center',marginBottom:'20px'}},[el('div',{style:{fontSize:'14px',color:'#888',marginBottom:'4px'}},[p?.nombre||'']),el('div',{style:{fontSize:'36px',fontWeight:'900',color:'#4ade80'}},[fmt(p?.total)])]));
+  cont.appendChild(el('p',{style:{color:'#888',textAlign:'center',marginBottom:'16px',fontSize:'13px'}},['¿Cómo paga?']));
+  const btns=el('div',{style:{display:'flex',gap:'10px'}});
+  btns.appendChild(el('button',{style:{flex:'1',background:'#22c55e',color:'#fff',border:'none',borderRadius:'12px',padding:'18px',fontWeight:'900',fontSize:'17px',cursor:'pointer'},onClick:()=>cobrarPedido(S.modalCobro,'efectivo')},['💵 Efectivo']));
+  btns.appendChild(el('button',{style:{flex:'1',background:'#38bdf8',color:'#0f0f13',border:'none',borderRadius:'12px',padding:'18px',fontWeight:'900',fontSize:'17px',cursor:'pointer'},onClick:()=>cobrarPedido(S.modalCobro,'digital')},['📱 Digital']));
+  cont.appendChild(btns);
+  return makeModal('Cobrar Pedido',()=>set({modalCobro:null}),cont);
+}
+
+function renderModalProducto(){
+  const cont=el('div',{style:{display:'flex',flexDirection:'column',gap:'12px'}});
+  const r1=el('div',{style:{display:'flex',gap:'8px'}});
+  const ei=el('input',{style:is({width:'56px',fontSize:'22px',textAlign:'center'}),value:S.formProducto.emoji});
+  ei.addEventListener('input',e=>S.formProducto.emoji=e.target.value);
+  const ni=el('input',{style:is({flex:'1'}),placeholder:'Nombre del producto',value:S.formProducto.nombre});
+  ni.addEventListener('input',e=>S.formProducto.nombre=e.target.value);
+  r1.appendChild(ei);r1.appendChild(ni);cont.appendChild(r1);
+  const pi=el('input',{type:'number',style:is(),placeholder:'Precio de venta ($)',value:S.formProducto.precio});
+  pi.addEventListener('input',e=>S.formProducto.precio=e.target.value);
+  cont.appendChild(pi);
+  const cb=el('div',{style:{display:'flex',gap:'6px'}});
+  ['comida','bebida','promo'].forEach(c=>cb.appendChild(el('button',{style:{flex:'1',padding:'8px 0',borderRadius:'8px',border:'none',background:S.formProducto.categoria===c?(CC[c]||'#f5a623'):'#2a2a35',color:S.formProducto.categoria===c?'#0f0f13':'#888',fontWeight:'700',cursor:'pointer',fontSize:'12px'},onClick:()=>{S.formProducto.categoria=c;render();}},[c])));
+  cont.appendChild(cb);
+  cont.appendChild(el('div',{style:{fontSize:'12px',color:'#888',fontWeight:'700'}},['INSUMOS QUE USA']));
+  S.formProducto.insumos.forEach((ins,idx)=>{
+    const ir=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
+    const sel=el('select',{style:{flex:'2',background:'#0f0f13',border:'1px solid #333',borderRadius:'8px',padding:'8px 6px',color:'#f0ece4',fontSize:'12px'}});
+    sel.appendChild(el('option',{value:''},['-- Insumo --']));
+    S.insumos.forEach(i=>{const o=el('option',{value:i.id},[i.nombre+' ('+i.unidad+')']);if(i.id===ins.insumoId)o.selected=true;sel.appendChild(o);});
+    sel.addEventListener('change',e=>S.formProducto.insumos[idx].insumoId=e.target.value);
+    const ci=el('input',{type:'number',style:is({flex:'1'}),placeholder:'Cant.',value:ins.cantidad||''});
+    ci.addEventListener('input',e=>S.formProducto.insumos[idx].cantidad=Number(e.target.value));
+    ir.appendChild(sel);ir.appendChild(ci);
+    ir.appendChild(el('button',{style:{background:'#2a2a35',border:'none',color:'#ef4444',borderRadius:'8px',padding:'0 10px',cursor:'pointer'},onClick:()=>{S.formProducto.insumos.splice(idx,1);render();}},['✕']));
+    cont.appendChild(ir);
+  });
+  cont.appendChild(el('button',{style:{background:'#2a2a35',border:'1px dashed #444',borderRadius:'8px',color:'#888',padding:'8px 0',width:'100%',cursor:'pointer',fontSize:'12px'},onClick:()=>{S.formProducto.insumos.push({insumoId:'',cantidad:0});render();}},['+ Agregar insumo']));
+  cont.appendChild(el('button',{style:{background:'#f5a623',color:'#0f0f13',border:'none',borderRadius:'10px',padding:'14px',fontWeight:'900',fontSize:'15px',cursor:'pointer'},onClick:guardarProducto},[S.editandoProducto?'Guardar cambios':'Agregar producto']));
+  return makeModal(S.editandoProducto?'Editar Producto':'Nuevo Producto',()=>set({modalProducto:false}),cont);
+}
+
+function renderModalInsumo(){
+  const cont=el('div',{style:{display:'flex',flexDirection:'column',gap:'12px'}});
+  const ni=el('input',{style:is(),placeholder:'Nombre del insumo',value:S.formInsumo.nombre});
+  ni.addEventListener('input',e=>S.formInsumo.nombre=e.target.value);
+  cont.appendChild(ni);
+  const r=el('div',{style:{display:'flex',gap:'8px'}});
+  const si=el('input',{type:'number',style:is({flex:'1'}),placeholder:'Stock inicial',value:S.formInsumo.stock});
+  si.addEventListener('input',e=>S.formInsumo.stock=e.target.value);
+  const sel=el('select',{style:{width:'80px',background:'#0f0f13',border:'1px solid #333',borderRadius:'10px',padding:'10px',color:'#f0ece4',fontSize:'14px'}});
+  ['g','kg','ml','l','u'].forEach(u=>{const o=el('option',{value:u},[u]);if(u===S.formInsumo.unidad)o.selected=true;sel.appendChild(o);});
+  sel.addEventListener('change',e=>S.formInsumo.unidad=e.target.value);
+  r.appendChild(si);r.appendChild(sel);cont.appendChild(r);
+  cont.appendChild(el('button',{style:{background:'#f5a623',color:'#0f0f13',border:'none',borderRadius:'10px',padding:'14px',fontWeight:'900',fontSize:'15px',cursor:'pointer'},onClick:guardarInsumo},[S.editandoInsumo?'Guardar':'Agregar']));
+  return makeModal(S.editandoInsumo?'Editar Insumo':'Nuevo Insumo',()=>set({modalInsumo:false}),cont);
+}
+
+function renderModalCargaInsumo(){
+  const ins=S.insumos.find(i=>i.id===S.modalCargaInsumo);
+  const cont=el('div');
+  const p=el('p',{style:{color:'#888',marginBottom:'12px'}});
+  p.appendChild(document.createTextNode(ins?.nombre+' · Stock actual: '));
+  p.appendChild(el('strong',{style:{color:'#f5a623'}},[ins?.stock+' '+ins?.unidad]));
+  cont.appendChild(p);
+  const i=el('input',{type:'number',style:is({marginTop:'4px'}),placeholder:'¿Cuánto agregás?',value:S.cantCarga});
+  i.addEventListener('input',e=>S.cantCarga=e.target.value);
+  i.addEventListener('keydown',e=>e.key==='Enter'&&cargarStockInsumo());
+  cont.appendChild(i);
+  cont.appendChild(el('button',{style:{marginTop:'12px',width:'100%',background:'#22c55e',color:'#fff',border:'none',borderRadius:'10px',padding:'14px',fontWeight:'900',fontSize:'15px',cursor:'pointer'},onClick:cargarStockInsumo},['Agregar al stock']));
+  setTimeout(()=>i.focus(),50);
+  return makeModal('Cargar Stock',()=>set({modalCargaInsumo:null}),cont);
+}
+
+render();
+cargarDatos();
+</script>
+</body>
+</html>
